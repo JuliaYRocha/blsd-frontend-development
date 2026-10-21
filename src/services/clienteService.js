@@ -1,36 +1,36 @@
 import api from "./api";
+import { normalizarPagina } from "../utils/paginacao";
 
-function normalizarPagina(data, fallbackSize = 10) {
-  if (Array.isArray(data)) {
+async function buscarPaginaClientes(rota, { page, size, busca, sort }) {
+  const termo = (busca || '').trim().toLowerCase();
+
+  if (termo) {
+    const { data } = await api.get(rota, { params: { page: 0, size: 1000, sort } });
+    const filtrados = (data?.content ?? []).filter(
+      (c) => c.nome?.toLowerCase().includes(termo) || c.email?.toLowerCase().includes(termo)
+    );
+    const totalElements = filtrados.length;
+    const totalPages = Math.max(1, Math.ceil(totalElements / size));
+    const number = Math.min(Math.max(0, page), totalPages - 1);
     return {
-      content: data,
-      totalElements: data.length,
-      totalPages: Math.max(1, Math.ceil(data.length / fallbackSize)),
-      number: 0,
-      size: fallbackSize,
+      content: filtrados.slice(number * size, number * size + size),
+      totalElements,
+      totalPages,
+      number,
+      size,
     };
   }
 
-  return {
-    content: Array.isArray(data?.content) ? data.content : [],
-    totalElements: Number(data?.totalElements ?? 0),
-    totalPages: Number(data?.totalPages ?? 1),
-    number: Number(data?.number ?? 0),
-    size: Number(data?.size ?? fallbackSize),
-  };
+  const { data } = await api.get(rota, { params: { page, size, sort } });
+  return normalizarPagina(data, { page, size });
 }
 
-export async function listarClientes({ page = 0, size = 10, busca = '' } = {}) {
-  const params = {};
-  if (page !== undefined && page !== null) params.page = page;
-  if (size !== undefined && size !== null) params.size = size;
-  if (busca) params.busca = busca;
+export function listarClientes({ page = 0, size = 10, busca = '', sort = 'nome,asc' } = {}) {
+  return buscarPaginaClientes('/cliente', { page, size, busca, sort });
+}
 
-  const { data } = await api.get(`/cliente`, {
-    params,
-  });
-
-  return normalizarPagina(data, size);
+export function listarClientesGestor({ page = 0, size = 10, busca = '', sort = 'nome,asc' } = {}) {
+  return buscarPaginaClientes('/usuarios/clientes', { page, size, busca, sort });
 }
 
 export async function deletarCliente(id) {

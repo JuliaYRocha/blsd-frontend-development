@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import BarraDeNavegacaoLateral from '../components/BarraDeNavegacaoLateral';
 import CartaoKPIClientes from '../components/CartaoKPIClientes';
 import TabelaClientes from '../components/TabelaClientes';
 import { listarClientes } from '../services/clienteService';
+import useDebounce from '../hooks/useDebounce';
 
 /* ── ícones ── */
 const iconePlus = (
@@ -42,56 +43,68 @@ const iconeAlvo = (
 const statusOpcoes = ['Todos'];
 
 export default function PaginaClientes() {
-  const [clientes, setClientes]         = useState([]);
-  const [carregando, setCarregando]     = useState(true);
-  const [erro, setErro]                 = useState(null);
-  const [busca, setBusca]               = useState('');
-  const [paginaAtual, setPaginaAtual]   = useState(0);
-  const [totalPaginas, setTotalPaginas] = useState(1);
+  const [clientes, setClientes]             = useState([]);
+  const [carregando, setCarregando]         = useState(true);
+  const [erro, setErro]                     = useState(null);
+  const [busca, setBusca]                   = useState('');
+  const [paginaAtual, setPaginaAtual]       = useState(0);
+  const [totalPaginas, setTotalPaginas]     = useState(1);
   const [totalElementos, setTotalElementos] = useState(0);
-  const [tamanhoPagina] = useState(8);
-  const [filtroStatus, setFiltroStatus] = useState('Todos');
-  const [dropStatus, setDropStatus]     = useState(false);
+  const [tamanhoPagina]                     = useState(8);
+  const [filtroStatus, setFiltroStatus]     = useState('Todos');
+  const [dropStatus, setDropStatus]         = useState(false);
+  const [versao, setVersao]                 = useState(0); // força recarregar a lista
+
+  // espera o usuário parar de digitar antes de buscar
+  const buscaDebounced = useDebounce(busca, 400);
 
   useEffect(() => {
+    let ativo = true;
+
     async function carregar() {
       try {
         setCarregando(true);
-        const resposta = await listarClientes({ page: paginaAtual, size: tamanhoPagina, busca });
-        const lista = Array.isArray(resposta?.content) ? resposta.content : [];
-        setClientes(lista);
-        setTotalPaginas(Number(resposta?.totalPages ?? 1));
-        setTotalElementos(Number(resposta?.totalElements ?? lista.length));
+        setErro(null);
+        const resposta = await listarClientes({
+          page: paginaAtual,
+          size: tamanhoPagina,
+          busca: buscaDebounced,
+        });
+        if (!ativo) return;
+        setClientes(resposta.content);
+        setTotalPaginas(resposta.totalPages);
+        setTotalElementos(resposta.totalElements);
       } catch (e) {
+        if (!ativo) return;
         console.error('Erro ao carregar clientes:', e);
         setErro('Não foi possível carregar os clientes.');
       } finally {
-        setCarregando(false);
+        if (ativo) setCarregando(false);
       }
     }
-    carregar();
-  }, [paginaAtual, tamanhoPagina, busca]);
 
-  // ── KPIs derivados dos dados reais ──
-  const total    = clientes.length;
-  // "Ativo" = tem dataCriacao (todos os cadastrados são ativos por padrão)
-  const ativos   = clientes.length;
-  // Taxa de retenção = % que tem mais de 1 consulta — sem endpoint específico,
-  // usamos 100% dos cadastrados como proxy até termos o endpoint
+    carregar();
+    return () => { ativo = false; };
+  }, [paginaAtual, tamanhoPagina, buscaDebounced, versao]);
+
+  // ── KPIs derivados do total real (todas as páginas) ──
+  const total    = totalElementos;
+  const ativos   = totalElementos;
   const retencao = total > 0 ? Math.round((ativos / total) * 100) : 0;
 
-  // ── Filtragem local ──
-  const clientesFiltrados = useMemo(() => {
-    return clientes.filter((c) => {
-      const termoBusca = busca.toLowerCase();
-      const bateNome   = c.nome?.toLowerCase().includes(termoBusca);
-      const bateEmail  = c.email?.toLowerCase().includes(termoBusca);
-      return bateNome || bateEmail;
-    });
-  }, [clientes, busca]);
+  // ao buscar, volta para a primeira página
+  function handleBusca(valor) {
+    setBusca(valor);
+    setPaginaAtual(0);
+  }
 
+  // após remover: se era o último item da página, volta uma página; senão recarrega
   function handleRemover(id) {
-    setClientes((prev) => prev.filter((c) => c.id !== id));
+    if (clientes.length === 1 && paginaAtual > 0) {
+      setPaginaAtual((p) => p - 1);
+    } else {
+      setVersao((v) => v + 1);
+    }
   }
 
   return (
@@ -107,7 +120,6 @@ export default function PaginaClientes() {
               <h1 className="text-3xl font-black text-gray-900 leading-tight">Gestão de Clientes</h1>
               <p className="text-sm text-gray-400 mt-1">Central de registros e histórico de pacientes premium.</p>
             </div>
- 
           </div>
 
           {/* ── KPIs */}
@@ -139,7 +151,7 @@ export default function PaginaClientes() {
               <span className="text-gray-400 flex-shrink-0">{iconeBusca}</span>
               <input
                 value={busca}
-                onChange={(e) => setBusca(e.target.value)}
+                onChange={(e) => handleBusca(e.target.value)}
                 placeholder="Buscar por nome ou e-mail..."
                 className="text-sm text-gray-700 bg-transparent outline-none w-full placeholder:text-gray-400"
               />
@@ -172,7 +184,7 @@ export default function PaginaClientes() {
 
           {/* ── Tabela ── */}
           <TabelaClientes
-            clientes={clientesFiltrados}
+            clientes={clientes}
             carregando={carregando}
             onRemover={handleRemover}
             paginaAtual={paginaAtual}
